@@ -1,0 +1,12 @@
+[package]
+name = "hyperplonk"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ark-ff = "0.3"
+ark-poly = "0.3"
+take_mut = "0.2"
+rand = "0.8"

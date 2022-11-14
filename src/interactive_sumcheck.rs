@@ -1,24 +1,20 @@
 //#![feature(generic_const_exprs)]
 use ark_ff::{FftField, Field};
 use ark_poly::{
-    univariate::DensePolynomial, DenseMultilinearExtension, EvaluationDomain, Evaluations,
-    MultilinearExtension, Polynomial, Radix2EvaluationDomain,
+    univariate::DensePolynomial, DenseMultilinearExtension, MultilinearExtension, Polynomial,
+    UVPolynomial,
 };
 use rand::thread_rng;
-use std::ops::Add;
+use std::{cmp::Ordering, ops::Add};
 
-// struct Evals<const L: usize, F: Field>
-// where
-// Assert<{ L.is_power_of_two() }>: Valid,
-// {
-// evals: [F; L],
-// }
-
-trait Valid {}
-
-struct Assert<const COND: bool>;
-
-impl Valid for Assert<true> {}
+fn accumulate_eval<F: Field>(acc: (F, F), eval: &F, i: usize, n: usize) -> (F, F) {
+    let (l, r) = acc;
+    if i < n / 2 {
+        (l + eval, r)
+    } else {
+        (l, r + eval)
+    }
+}
 
 fn evaluations<F: Field>(challenge: F, mut evals: Vec<F>) -> ((F, F), Vec<F>) {
     assert!(evals.len().is_power_of_two());
@@ -31,17 +27,38 @@ fn evaluations<F: Field>(challenge: F, mut evals: Vec<F>) -> ((F, F), Vec<F>) {
             |acc, (i, (left, right))| {
                 let new_eval = *left * (F::one() - challenge) + *right * challenge;
                 *left = new_eval;
-                let (accl, accr) = acc;
-                if i < n / 2 {
-                    (accl + new_eval, accr)
-                } else {
-                    (accl, accr + new_eval)
-                }
+                accumulate_eval(acc, &new_eval, i, n / 2)
             },
         )
     };
     evals.truncate(n / 2);
     (message, evals)
+}
+/// to evaluate multilinear extension at single point, because the arkworks implementation
+/// uses different endianness and is probably slower
+fn evaluate_extension<F: Field>(mut evals: Vec<F>, point: &[F]) -> Result<F, &'static str> {
+    let n = evals.len();
+    n.is_power_of_two()
+        .then_some(())
+        .ok_or("must be power of two")?;
+    match 2_usize.pow(point.len() as u32).cmp(&n) {
+        Ordering::Less => Err("too few variables"),
+        Ordering::Greater => Err("to many variables"),
+        _ => Ok(()),
+    }?;
+
+    let mut evals = evals.as_mut_slice();
+    for p in point {
+        let n = evals.len();
+        let (left, right) = evals.split_at_mut(n / 2);
+        for e in left.iter_mut().zip(right.iter_mut()) {
+            let (left, right) = e;
+            let new_eval = *left * (F::one() - p) + *right * p;
+            *left = new_eval;
+        }
+        evals = left;
+    }
+    Ok(evals[0])
 }
 //-------------prover--------------
 struct Prover<F: FftField> {
@@ -80,12 +97,7 @@ impl<F: FftField> Prover<F> {
             .iter()
             .enumerate()
             .fold((F::zero(), F::zero()), |sum, (i, eval)| {
-                let (l, r) = sum;
-                if i < n / 2 {
-                    (l + eval, r)
-                } else {
-                    (l, r + eval)
-                }
+                accumulate_eval(sum, eval, i, n)
             })
     }
     fn next_message(&mut self, challenge: F) -> (F, F) {
@@ -134,8 +146,8 @@ impl<F: FftField> Verifier<F> {
         //nothing to do, the representation of message already enforces it
         let new_challenge = Self::challenge(&message);
         let eval_at_challenge = self.last_poly.evaluate(self.challenges.last().unwrap());
-        let (l, f) = message;
-        let message = (eval_at_challenge == l + f)
+        let (l, r) = message;
+        let message = (eval_at_challenge == l + r)
             .then_some(message)
             .ok_or("sum doesn't hold")?;
         let poly = Self::message_to_poly(message);
@@ -152,22 +164,29 @@ impl<F: FftField> Verifier<F> {
         let (l, f) = message;
         (eval_at_challenge == l + f)
             .then_some(())
-            .ok_or("sum doesn't hold")?;
+            .ok_or("sum doesn't hold2")?;
         //maybe it should also be based on poly
         let last_challenge = Self::challenge(&message);
         let last_poly = Self::message_to_poly(message);
         let last_poly_eval = last_poly.evaluate(&last_challenge);
         let mut point = self.challenges;
         point.push(last_challenge);
-        let full_poly_eval = poly.evaluate(&*point).unwrap();
+        //let full_poly_eval = poly.evaluate(&*point).unwrap();
+        let full_poly_eval = evaluate_extension(poly.to_evaluations(), &*point).unwrap();
         (full_poly_eval == last_poly_eval)
             .then_some(())
             .ok_or("last check failed")
     }
     fn message_to_poly(message: (F, F)) -> DensePolynomial<F> {
         let (l, f) = message;
-        let domain = Radix2EvaluationDomain::<F>::new(2).unwrap();
-        Evaluations::from_vec_and_domain(vec![l, f], domain).interpolate()
+        // -x + 1
+        let l0 = DensePolynomial::from_coefficients_vec(vec![F::one(), -F::one()]);
+        // x
+        let l1 = DensePolynomial::from_coefficients_vec(vec![F::zero(), F::one()]);
+
+        let poly = &l0 * l + &l1 * f;
+        debug_assert_eq!(l + f, poly.evaluate(&F::zero()) + poly.evaluate(&F::one()));
+        poly
     }
     fn challenge(_message: &(F, F)) -> F {
         //should use message as seed
@@ -200,12 +219,46 @@ impl<F: FftField> Protocol<F> {
         let (mut verifier, first_challenge) = Verifier::new(claimed_sum, first_message)?;
 
         let mut last_challenge = first_challenge;
-        for _ in 0..(vars) {
+        for _ in 0..(vars - 2) {
             let message = prover.next_message(last_challenge);
             let challenge = verifier.round(message)?;
             last_challenge = challenge;
         }
         let (last_message, full_poly) = prover.last_message(last_challenge);
         verifier.last_check(last_message, full_poly)
+    }
+}
+
+#[test]
+fn test1() {
+    use ark_pallas::Fr;
+    use std::time::Instant;
+    // let vals: Vec<Fr> = (1_i32..9).map(|x| Fr::from(x)).collect();
+    let now = Instant::now();
+    let prot = Protocol::<Fr>::new_random(256 * 256 * 1);
+    let time = now.elapsed();
+    println!("took: {}ms", time.as_millis());
+    // let prot = Protocol::<Fr>::new(vals);
+    prot.run().unwrap()
+}
+
+#[test]
+fn test2() {
+    use ark_pallas::Fr;
+    let vals: Vec<Fr> = (0_i32..8).map(|x| Fr::from(x)).collect();
+    let points = [
+        [0, 0, 0],
+        [0, 0, 1],
+        [0, 1, 0],
+        [0, 1, 1],
+        [1, 0, 0],
+        [1, 0, 1],
+        [1, 1, 0],
+        [1, 1, 1],
+    ];
+    let points = points.map(|p| p.map(Fr::from));
+    for point in points {
+        let e = evaluate_extension(vals.clone(), &point).unwrap();
+        println!("{}", e);
     }
 }

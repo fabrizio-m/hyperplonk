@@ -1,4 +1,4 @@
-A simple hyperplonk prototype
+A simple hyperplonk prototype. Generic over field, homomorphic multilinear commitment scheme, custom gates, and number of columns.
 
 ```rust
 use crate::{

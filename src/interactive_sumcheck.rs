@@ -196,7 +196,7 @@ impl<F: FftField> Verifier<F> {
 }
 
 //----------protocol----------
-pub struct Protocol<F: FftField> {
+struct Protocol<F: FftField> {
     evals: Vec<F>,
     vars: usize,
 }
@@ -235,11 +235,10 @@ fn test1() {
     use std::time::Instant;
     // let vals: Vec<Fr> = (1_i32..9).map(|x| Fr::from(x)).collect();
     let now = Instant::now();
-    let prot = Protocol::<Fr>::new_random(256 * 256 * 1);
+    let prot = Protocol::<Fr>::new_random(256 * 256 * 256);
+    prot.run().unwrap();
     let time = now.elapsed();
     println!("took: {}ms", time.as_millis());
-    // let prot = Protocol::<Fr>::new(vals);
-    prot.run().unwrap()
 }
 
 #[test]

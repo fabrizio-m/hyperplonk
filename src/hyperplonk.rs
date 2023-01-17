@@ -1,7 +1,6 @@
 use crate::{
     challenges::ChallengeGenerator,
     function_sumcheck::{self, CheckPoint, Element, Function, SumcheckFunc},
-    misc::print_row,
     permutation::PermutationCheck,
     polynomials::{
         eval_sparse_poly, random_poly_evals_slow, CommitmentScheme, Evaluations, HyperPoint,
@@ -254,8 +253,8 @@ where
             { 3 * COLS + 2 + 2 + 1 },
             { GATES + 2 },
         >::new(vars, powers_of_alpha);
-        dbg!();
-        print_row(&full_extension[0]);
+        //dbg!();
+        //misc::print_row(&full_extension[0]);
         let time = std::time::Instant::now();
         let (sumcheck_proof, point) = sumcheck.prove(full_extension, challenge_generator);
 

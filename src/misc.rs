@@ -10,6 +10,7 @@ pub fn index_to_point<F: Field>(vars: usize, point: usize) -> Vec<F> {
     p
 }
 
+#[allow(dead_code)]
 pub fn print_row<F: Field, const C: usize>(row: &[F; C]) {
     println!("\n printing rows:");
     for (i, e) in row.iter().enumerate() {

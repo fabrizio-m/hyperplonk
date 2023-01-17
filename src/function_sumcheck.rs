@@ -138,8 +138,7 @@ where
             .zip(right)
             .fold(init, |state, (left, right)| {
                 let a = left.clone().zip(right.clone());
-                let vars = a.map(|(zero, one)| Self::make_poly_for_function(zero, one, &domain));
-                //let aux = self.aux;
+                let vars = a.map(|(zero, one)| Self::make_poly_for_function2(zero, one, &domain));
                 let poly: UniPoly<F> = U::function(vars, &aux);
                 &state + &poly
             })
@@ -226,6 +225,7 @@ where
             deg_1_poly
         }
     }*/
+    #[allow(dead_code)]
     fn make_poly_for_function(
         eval_in_zero: F,
         eval_in_one: F,
@@ -236,6 +236,26 @@ where
     {
         let poly = Self::message_to_poly((eval_in_zero, eval_in_one));
         let evals = poly.evaluate_over_domain(*domain);
+        UniPoly { evals }
+    }
+    ///lineal and faster than the original, also could work without fft field
+    fn make_poly_for_function2(
+        eval_in_zero: F,
+        eval_in_one: F,
+        domain: &Radix2EvaluationDomain<F>,
+    ) -> UniPoly<F>
+    where
+        F: FftField,
+    {
+        let poly = Self::message_to_poly((eval_in_zero, eval_in_one));
+        let c0 = poly.coeffs[0];
+        let c1 = poly.coeffs[1];
+        let mut evals = Vec::with_capacity(domain.size());
+        evals.extend(domain.elements());
+        for e in evals.iter_mut() {
+            *e = *e * c1 + c0;
+        }
+        let evals = Evaluations::from_vec_and_domain(evals, *domain);
         UniPoly { evals }
     }
 }
@@ -499,20 +519,6 @@ impl<F: FftField> Sub for UniPoly<F> {
 }
 impl<F: FftField> Element for UniPoly<F> {
     type Out = UniPoly<F>;
-}
-
-pub fn product<F, const COLS: usize>(input: &[F; COLS]) -> F
-where
-    F: Element<Out = F>,
-    for<'a> &'a F: Element<Out = F>,
-{
-    assert!(COLS > 2);
-    let u = &input[0] * &input[1];
-    let u = &u - &input[2];
-    // if !u.is_zero() {
-    // println!("WRONG");
-    // }
-    u
 }
 
 #[derive(Clone, Copy, Debug)]
